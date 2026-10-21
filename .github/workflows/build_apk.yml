@@ -1,0 +1,55 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+
+      - name: Get Dependencies (Driver App)
+        run: |
+          cd Smart_City_Ambulance/ambulance_alert_app/driver_app
+          flutter pub get
+
+      - name: Build APK (Driver App)
+        run: |
+          cd Smart_City_Ambulance/ambulance_alert_app/driver_app
+          flutter build apk --release
+
+      - name: Get Dependencies (Police App)
+        run: |
+          cd Smart_City_Ambulance/ambulance_alert_app/police_app
+          flutter pub get
+
+      - name: Build APK (Police App)
+        run: |
+          cd Smart_City_Ambulance/ambulance_alert_app/police_app
+          flutter build apk --release
+
+      - name: Upload Driver APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: driver-app-apk
+          path: Smart_City_Ambulance/ambulance_alert_app/driver_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload Police APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: police-app-apk
+          path: Smart_City_Ambulance/ambulance_alert_app/police_app/build/app/outputs/flutter-apk/app-release.apk
