@@ -46,4 +46,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: police-app-apk
-          path: Smart_City_Ambulance/ambulance_alert_app/police_app/build/app/outputs/flutter-apk/app-release.apk
+          path: Smart_City_Ambulance/ambulance_alert_app/police_app/build/app/outputs/flutter-apk/app-release.apk 
