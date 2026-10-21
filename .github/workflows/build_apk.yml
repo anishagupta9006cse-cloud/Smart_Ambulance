@@ -26,13 +26,13 @@ jobs:
 
       - name: Build Driver App APK
         run: |
-          cd ambulance_alert_app/driver_app
+          cd Smart_City_Ambulance/ambulance_alert_app/driver_app
           flutter pub get
           flutter build apk --release
 
       - name: Build Police App APK
         run: |
-          cd ambulance_alert_app/police_app
+          cd Smart_City_Ambulance/ambulance_alert_app/police_app
           flutter pub get
           flutter build apk --release
 
@@ -40,10 +40,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: driver-app-apk
-          path: ambulance_alert_app/driver_app/build/app/outputs/flutter-apk/app-release.apk
+          path: Smart_City_Ambulance/ambulance_alert_app/driver_app/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload Police App APK
         uses: actions/upload-artifact@v4
         with:
           name: police-app-apk
-          path: ambulance_alert_app/police_app/build/app/outputs/flutter-apk/app-release.apk
+          path: Smart_City_Ambulance/ambulance_alert_app/police_app/build/app/outputs/flutter-apk/app-release.apk
