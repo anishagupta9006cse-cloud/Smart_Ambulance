@@ -4,7 +4,7 @@ class AppConfig {
   /// Server URL. It can also be changed under "Advanced" on the login screen.
   static const String defaultServer = String.fromEnvironment(
     'SERVER_URL',
-    defaultValue: 'http://10.119.245.87:3000',
+    defaultValue: 'https://smart-ambulance-mk2n.onrender.com',
   );
   static const String tileUrl =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
