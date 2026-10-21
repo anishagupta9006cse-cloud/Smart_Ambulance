@@ -1,4 +1,4 @@
-name: Build Android APK
+ name: Build Android APKs
 
 on:
   push:
@@ -22,24 +22,12 @@ jobs:
           flutter-version: '3.x'
           channel: 'stable'
 
-      - name: Get Dependencies (Driver App)
+      # --- 1. BUILD DRIVER APP ---
+      - name: Build Driver App
         run: |
           cd Smart_City_Ambulance/ambulance_alert_app/driver_app
+          flutter create . --platforms=android
           flutter pub get
-
-      - name: Build APK (Driver App)
-        run: |
-          cd Smart_City_Ambulance/ambulance_alert_app/driver_app
-          flutter build apk --release
-
-      - name: Get Dependencies (Police App)
-        run: |
-          cd Smart_City_Ambulance/ambulance_alert_app/police_app
-          flutter pub get
-
-      - name: Build APK (Police App)
-        run: |
-          cd Smart_City_Ambulance/ambulance_alert_app/police_app
           flutter build apk --release
 
       - name: Upload Driver APK
@@ -47,6 +35,14 @@ jobs:
         with:
           name: driver-app-apk
           path: Smart_City_Ambulance/ambulance_alert_app/driver_app/build/app/outputs/flutter-apk/app-release.apk
+
+      # --- 2. BUILD POLICE APP ---
+      - name: Build Police App
+        run: |
+          cd Smart_City_Ambulance/ambulance_alert_app/police_app
+          flutter create . --platforms=android
+          flutter pub get
+          flutter build apk --release
 
       - name: Upload Police APK
         uses: actions/upload-artifact@v4
