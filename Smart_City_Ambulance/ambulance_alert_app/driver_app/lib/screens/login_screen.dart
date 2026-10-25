@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../config.dart';
 import '../profile.dart';
+import '../theme.dart';
+import 'help_screen.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -56,7 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _busy = true;
         _failed = false;
-        _msg = 'Connecting to the server...\n(The first time can take 30-60 seconds)';
+        _msg = 'Connecting to the server...\nThe first time can take up to 1 minute. Please wait.';
       });
       final ok = await Api.I.wakeServer();
       if (!mounted) return;
@@ -64,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() {
           _busy = false;
           _failed = true;
-          _msg = 'Could not connect to the server. Check your internet and try again.';
+          _msg = 'Could not connect to the server. Please check your internet and try again.';
         });
         return;
       }
@@ -101,33 +103,33 @@ class _LoginScreenState extends State<LoginScreen> {
                     textCapitalization: TextCapitalization.words,
                     decoration: const InputDecoration(
                         labelText: 'Driver name', prefixIcon: Icon(Icons.person), border: OutlineInputBorder()),
-                    validator: (v) => (v == null || v.trim().length < 2) ? 'Enter a name' : null,
+                    validator: (v) => (v == null || v.trim().length < 2) ? 'Please enter your name' : null,
                   ),
                   const SizedBox(height: 14),
                   TextFormField(
                     controller: _amb,
                     textCapitalization: TextCapitalization.characters,
                     decoration: const InputDecoration(
-                        labelText: 'Ambulance number / ID (e.g. AMB-101)',
+                        labelText: 'Ambulance number (example: AMB-101)',
                         prefixIcon: Icon(Icons.airport_shuttle),
                         border: OutlineInputBorder()),
-                    validator: (v) => (v == null || v.trim().length < 2) ? 'Enter the ambulance ID' : null,
+                    validator: (v) => (v == null || v.trim().length < 2) ? 'Please enter the ambulance number' : null,
                   ),
                   const SizedBox(height: 8),
                   ExpansionTile(
                     tilePadding: EdgeInsets.zero,
-                    title: const Text('Advanced (server / access code)'),
+                    title: const Text('Settings (server and access code)'),
                     children: [
                       TextFormField(
                         controller: _server,
                         keyboardType: TextInputType.url,
-                        decoration: const InputDecoration(labelText: 'Server URL', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(labelText: 'Server address', border: OutlineInputBorder()),
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _code,
                         decoration: const InputDecoration(
-                            labelText: 'Access code (if enabled on the server)', border: OutlineInputBorder()),
+                            labelText: 'Access code (only if your admin gave you one)', border: OutlineInputBorder()),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -142,13 +144,24 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   FilledButton(
                     onPressed: _busy ? null : () => _go(),
-                    style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                    style: solidButton(BtnColors.blue, padding: const EdgeInsets.symmetric(vertical: 16)),
                     child: _busy
                         ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5))
-                        : const Text('Continue', style: TextStyle(fontSize: 17)),
+                        : const Text('CONTINUE', style: TextStyle(fontSize: 17)),
                   ),
                   if (_failed)
-                    TextButton(onPressed: () => _go(skipCheck: true), child: const Text('Continue without connecting')),
+                    FilledButton(
+                      style: solidButton(BtnColors.brown),
+                      onPressed: () => _go(skipCheck: true),
+                      child: const Text('CONTINUE WITHOUT INTERNET'),
+                    ),
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    style: textColor(BtnColors.indigo),
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HelpScreen())),
+                    icon: const Icon(Icons.help_outline),
+                    label: const Text('How to use this app'),
+                  ),
                 ],
               ),
             ),

@@ -112,25 +112,63 @@ class Api {
 
   Map<String, double> _pt(LatLng p) => {'lat': p.latitude, 'lng': p.longitude};
 
-  Future<List<PlaceResult>> geocode(String q, {LatLng? near}) async {
-    final res = await _send('GET', '/api/geocode', query: {
-      'q': q,
-      if (near != null) 'lat': near.latitude.toString(),
-      if (near != null) 'lng': near.longitude.toString(),
-    }, timeout: const Duration(seconds: 30));
+  List<PlaceResult> _places(dynamic list) {
     final out = <PlaceResult>[];
-    final list = res['results'];
     if (list is List) {
       for (final e in list) {
         if (e is Map) {
           final lat = e['lat'], lng = e['lng'];
           if (lat is num && lng is num) {
-            out.add(PlaceResult(e['name']?.toString() ?? 'Place', LatLng(lat.toDouble(), lng.toDouble())));
+            final d = e['distance'];
+            out.add(PlaceResult(
+              e['name']?.toString() ?? 'Place',
+              LatLng(lat.toDouble(), lng.toDouble()),
+              category: e['category']?.toString() ?? 'other',
+              local: e['local'] == true,
+              distance: d is num ? d.round() : null,
+            ));
           }
         }
       }
     }
     return out;
+  }
+
+  /// Search by name. Saved (local) places come first.
+  Future<List<PlaceResult>> geocode(String q, {LatLng? near}) async {
+    final res = await _send('GET', '/api/geocode',
+        query: {
+          'q': q,
+          if (near != null) 'lat': near.latitude.toString(),
+          if (near != null) 'lng': near.longitude.toString(),
+        },
+        timeout: const Duration(seconds: 30));
+    return _places(res['results']);
+  }
+
+  /// Saved places of one type (example: hospital), nearest first.
+  Future<List<PlaceResult>> nearby(String category, {LatLng? near}) async {
+    final res = await _send('GET', '/api/places/nearby',
+        query: {
+          'category': category,
+          if (near != null) 'lat': near.latitude.toString(),
+          if (near != null) 'lng': near.longitude.toString(),
+        },
+        timeout: const Duration(seconds: 20),
+        retries: 1);
+    return _places(res['results']);
+  }
+
+  /// Save a new place in the server database so everybody can find it.
+  Future<void> savePlace(String name, String category, LatLng p) async {
+    await _send('POST', '/api/places',
+        body: {
+          'name': name,
+          'category': category,
+          'lat': p.latitude,
+          'lng': p.longitude,
+        },
+        retries: 1);
   }
 
   Future<RouteInfo> route(LatLng from, LatLng to) async {

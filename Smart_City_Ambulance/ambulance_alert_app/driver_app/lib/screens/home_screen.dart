@@ -10,7 +10,9 @@ import '../geo.dart';
 import '../location_helper.dart';
 import '../models.dart';
 import '../profile.dart';
+import '../theme.dart';
 import '../voice.dart';
+import 'help_screen.dart';
 import 'login_screen.dart';
 import 'place_picker_screen.dart';
 
@@ -193,10 +195,20 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_tripActive) return;
     final r = await Navigator.of(context).push<PlaceResult>(MaterialPageRoute(
       builder: (_) => PlacePickerScreen(
-        title: isFrom
-            ? 'Choose start location'
-            : 'Choose destination (hospital)',
+        title: isFrom ? 'Choose your start point' : 'Choose where to go',
+        hint: isFrom ? 'Type a place name' : 'Type a hospital or place name',
         initial: _me ?? _fromPoint ?? _toPoint,
+        chips: isFrom
+            ? const [
+                PlaceChip('Chowks & Markets', 'market', BtnColors.brown),
+                PlaceChip('Hospitals', 'hospital', BtnColors.teal),
+                PlaceChip('Railway & Bus', 'transport', BtnColors.indigo),
+              ]
+            : const [
+                PlaceChip('Hospitals', 'hospital', BtnColors.teal),
+                PlaceChip('Railway & Bus', 'transport', BtnColors.indigo),
+                PlaceChip('Famous places', 'landmark', BtnColors.orange),
+              ],
       ),
     ));
     if (r == null || !mounted) return;
@@ -244,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _route = r;
         _track = RouteTrack(r.points);
         _banner = r.fallback
-            ? 'Road data unavailable: showing an approximate straight-line route (fine for a demo).'
+            ? 'Road map data is not available now. Showing a straight line only (good for practice, not for real driving).'
             : null;
       });
       _fitRoute();
@@ -262,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (r == null || to == null || r.points.isEmpty) return;
     if (!_useSim && _me == null) {
       _snack(
-          'Real GPS location is not available yet. Please wait or turn on Demo simulation.');
+          'Your location is not found yet. Please wait, or turn on Practice mode.');
       return;
     }
     final from = _useSim ? r.points.first : (_me ?? r.points.first);
@@ -295,7 +307,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Timer.periodic(const Duration(seconds: 2), (_) => _sendNow());
       if (_useSim) _startSim();
       _fitRoute();
-      Voice.I.speak('Emergency trip started.');
+      Voice.I.speak('Emergency trip started. Drive safely.');
       _sendNow();
     } catch (e) {
       _snack(e.toString());
@@ -347,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _onCompleted();
       } else if (st.status == 'stopped') {
         await _endLocal();
-        _snack('The trip has already ended on the server.');
+        _snack('This trip has already ended.');
       }
     } on ApiException catch (e) {
       if (e.code == 'TRIP_NOT_FOUND') {
@@ -412,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
     for (final a in st.actions) {
       final key = '${a.postName}|${a.action}|${a.at}';
       if (_seenActions.add(key) && a.action == 'ack') {
-        Voice.I.speak('Police acknowledged your alert.');
+        Voice.I.speak('Police have seen your alert.');
       }
     }
   }
@@ -423,12 +435,14 @@ class _HomeScreenState extends State<HomeScreen> {
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Destination reached'),
+        title: const Text('You have reached'),
         content: const Text(
-            'Emergency trip completed. All alerts have been stopped.'),
+            'The emergency trip is finished. Police alerts are stopped.'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('OK'))
+          FilledButton(
+              style: solidButton(BtnColors.green),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'))
         ],
       ),
     );
@@ -454,12 +468,14 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Stop trip?'),
-        content: const Text('Alerts to all police posts will stop.'),
+        content: const Text('Police will not get alerts about your ambulance any more.'),
         actions: [
           TextButton(
+              style: textColor(BtnColors.teal),
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('No')),
+              child: const Text('No, keep going')),
           FilledButton(
+              style: solidButton(BtnColors.charcoal),
               onPressed: () => Navigator.pop(context, true),
               child: const Text('Yes, stop')),
         ],
@@ -502,8 +518,8 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final n = await Api.I.testAlert(id);
       _snack(n == 0
-          ? 'No police post is online right now. Open the Police app.'
-          : 'TEST alert sent to $n police post(s).');
+          ? 'No police post is online right now. Ask the police to open their app.'
+          : 'Test alert sent to $n police post(s).');
     } catch (e) {
       _snack(e.toString());
     }
@@ -537,17 +553,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _postText(PostInfo p) {
-    if (p.status == 'passed') return 'passed (muted)';
-    if (p.acked) return 'ACK ✓';
+    if (p.status == 'passed') return 'Crossed';
+    if (p.acked) return 'Police saw it ✓';
     switch (p.status) {
       case 'imminent':
-        return 'alert active';
+        return 'Very close';
       case 'approaching':
-        return 'alert sent';
+        return 'Police alerted';
       case 'paused':
-        return 'paused';
+        return 'On hold';
       default:
-        return 'standby';
+        return 'Waiting';
     }
   }
 
@@ -647,14 +663,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final serverChip = _checkingServer
         ? _chip(Icons.sync, 'Connecting to server...', Colors.orange)
         : (_serverOk
-            ? _chip(Icons.cloud_done, 'Server OK', Colors.green)
+            ? _chip(Icons.cloud_done, 'Server connected', Colors.green)
             : GestureDetector(
                 onTap: _checkServer,
-                child: _chip(Icons.cloud_off, 'Server offline (tap to retry)',
+                child: _chip(Icons.cloud_off, 'No server. Tap to try again',
                     Colors.red)));
     final gpsChip = _me == null
-        ? _chip(Icons.gps_not_fixed, 'Searching for GPS...', Colors.orange)
-        : _chip(Icons.gps_fixed, 'GPS ±${_acc.round()} m', Colors.green);
+        ? _chip(Icons.gps_not_fixed, 'Finding your location...', Colors.orange)
+        : _chip(Icons.gps_fixed, 'Location accuracy: ${_acc.round()} m', Colors.green);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -697,7 +713,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: Text(
                             _toLabel.isEmpty
-                                ? 'Where to? (Hospital / destination)'
+                                ? 'Where do you want to go? (hospital)'
                                 : _toLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -729,12 +745,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Icon(Icons.emergency, color: Colors.white),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('EMERGENCY ACTIVE • ${widget.profile.ambulanceId}',
+                  child: Text('EMERGENCY TRIP ON • ${widget.profile.ambulanceId}',
                       style: const TextStyle(
                           color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
                 if (_simRunning)
-                  const Text('DEMO',
+                  const Text('PRACTICE',
                       style: TextStyle(
                           color: Colors.white70, fontWeight: FontWeight.bold)),
               ]),
@@ -801,16 +817,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 8),
                   const Expanded(
                       child: Text(
-                          'You have left the route. Automatic alerts are paused.')),
+                          'You are off the route. Police alerts are on hold.')),
                   FilledButton(
+                      style: solidButton(BtnColors.orange),
                       onPressed: _busy ? null : _reroute,
-                      child: const Text('Re-route')),
+                      child: const Text('FIND NEW ROUTE')),
                 ]),
               ),
             Row(children: [
-              _stat('remaining', fmtDist(st.remaining)),
-              _stat('ETA', fmtDur(st.etaSec)),
-              _stat('speed', '${(_speed * 3.6).round()} km/h'),
+              _stat('Distance left', fmtDist(st.remaining)),
+              _stat('Time left', fmtDur(st.etaSec)),
+              _stat('Speed', '${(_speed * 3.6).round()} km/h'),
             ]),
             const SizedBox(height: 10),
             LinearProgressIndicator(
@@ -829,7 +846,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: Text(
                     nj == null
-                        ? 'No more junctions — destination is near'
+                        ? 'No more junctions. You are near the end.'
                         : 'Next junction: ${fmtDist(nj.distance)}',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
@@ -838,7 +855,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             if (st.posts.isNotEmpty) ...[
               const SizedBox(height: 10),
-              const Text('Police posts on route',
+              const Text('Police posts on your way',
                   style: TextStyle(fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               ...st.posts.take(4).map((p) => Padding(
@@ -866,7 +883,8 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 12),
             Row(children: [
               Expanded(
-                child: OutlinedButton.icon(
+                child: FilledButton.icon(
+                  style: solidButton(BtnColors.pink),
                   onPressed: _testAlert,
                   icon: const Icon(Icons.campaign),
                   label: const Text('TEST ALERT'),
@@ -875,8 +893,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: Colors.red.shade800),
+                  style: solidButton(BtnColors.charcoal),
                   onPressed: _stopTrip,
                   icon: const Icon(Icons.stop_circle),
                   label: const Text('STOP TRIP'),
@@ -890,21 +907,21 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(children: [
-              _stat('distance', fmtDist(r.distance)),
-              _stat('ETA', fmtDur(r.duration)),
-              _stat('junctions', '${r.junctions.length}'),
+              _stat('Distance', fmtDist(r.distance)),
+              _stat('Time', fmtDur(r.duration)),
+              _stat('Junctions', '${r.junctions.length}'),
             ]),
             const SizedBox(height: 6),
             const Text(
-              'Junctions on the route are selected automatically (orange dots). A police post is alerted only when the ambulance is heading toward its area.',
+              'Orange dots are junctions. They are chosen automatically. Police are alerted only when you are coming towards their area.',
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
             SwitchListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              title: const Text('Demo simulation (test from home)'),
+              title: const Text('Practice mode (test at home)'),
               subtitle: const Text(
-                  'The ambulance moves along the route automatically instead of using real GPS'),
+                  'The ambulance moves on the map by itself. No real driving needed.'),
               value: _useSim,
               onChanged: (v) => setState(() => _useSim = v),
             ),
@@ -924,8 +941,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text('${_simKmh.round()} km/h'),
               ]),
             FilledButton.icon(
-              style: FilledButton.styleFrom(
-                  backgroundColor: Colors.red,
+              style: solidButton(BtnColors.red,
                   padding: const EdgeInsets.symmetric(vertical: 16)),
               onPressed: _busy ? null : _startTrip,
               icon: _busy
@@ -952,8 +968,8 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: Text(
             _busy
-                ? 'Building route...'
-                : 'Tap "Where to?" above and choose a hospital / destination.',
+                ? 'Making your route...'
+                : 'Tap the box above and choose your hospital.',
             style: const TextStyle(fontSize: 15),
           ),
         ),
@@ -1050,13 +1066,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   onSelected: (v) {
                     if (v == 'logout') _logout();
                     if (v == 'server') _checkServer();
+                    if (v == 'help') {
+                      Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const HelpScreen()));
+                    }
                   },
                   itemBuilder: (_) => [
-                    PopupMenuItem(
-                        value: 'server',
-                        child: Text('Server check (${widget.profile.name})')),
                     const PopupMenuItem(
-                        value: 'logout', child: Text('Change profile')),
+                        value: 'help', child: Text('How to use')),
+                    const PopupMenuItem(
+                        value: 'server', child: Text('Check server')),
+                    const PopupMenuItem(
+                        value: 'logout',
+                        child: Text('Change driver / ambulance')),
                   ],
                 ),
               ]),

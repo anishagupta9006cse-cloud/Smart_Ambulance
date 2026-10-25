@@ -55,7 +55,11 @@ class RouteInfo {
 class PlaceResult {
   final String name;
   final LatLng point;
-  PlaceResult(this.name, this.point);
+  final String category; // hospital | police | transport | market | ... | other
+  final bool local; // true = saved in our own places database
+  final int? distance; // metres from the user (if known)
+  PlaceResult(this.name, this.point,
+      {this.category = 'other', this.local = false, this.distance});
 }
 
 class NextJunction {
@@ -86,11 +90,11 @@ class PoliceAction {
   String get label {
     switch (action) {
       case 'ack':
-        return 'Alert acknowledged';
+        return 'Police saw your alert';
       case 'clear_lane':
-        return 'Clearing the lane';
+        return 'Police are clearing the lane';
       case 'escalate':
-        return 'Escalated';
+        return 'Police asked for help';
       default:
         return action;
     }
