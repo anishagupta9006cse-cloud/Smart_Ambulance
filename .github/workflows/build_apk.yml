@@ -1,57 +1,57 @@
-name: Build APKs
+name: Build Driver + Police APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: driver_app
+            label: "AmbuRoute Driver"
+          - app: police_app
+            label: "AmbuRoute Police"
+    env:
+      BASE: Smart_City_Ambulance/ambulance_alert_app
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: temurin
           java-version: '17'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.x'
-          channel: 'stable'
+          channel: stable
+          cache: true
 
-      # Build Driver App APK
-      - name: Build Driver App APK
-        working-directory: Smart_City_Ambulance/ambulance_alert_app/driver_app
+      - name: Create android folder and add permissions
+        working-directory: ${{ env.BASE }}/${{ matrix.app }}
         run: |
-          flutter clean
-          flutter pub get
-          flutter build apk --release
+          cp -r lib /tmp/lib_backup
+          cp pubspec.yaml /tmp/pubspec_backup.yaml
+          flutter create --platforms=android --org com.amburoute --project-name ${{ matrix.app }} .
+          rm -rf lib test
+          cp -r /tmp/lib_backup lib
+          cp /tmp/pubspec_backup.yaml pubspec.yaml
+          python3 ../tools/patch_android.py android/app/src/main/AndroidManifest.xml "${{ matrix.label }}"
 
-      # Build Police App APK
-      - name: Build Police App APK
-        working-directory: Smart_City_Ambulance/ambulance_alert_app/police_app
-        run: |
-          flutter clean
-          flutter pub get
-          flutter build apk --release
+      - name: Packages download
+        working-directory: ${{ env.BASE }}/${{ matrix.app }}
+        run: flutter pub get
 
-      # Upload Driver App APK Artifact
-      - name: Upload Driver App APK
+      - name: APK build
+        working-directory: ${{ env.BASE }}/${{ matrix.app }}
+        run: flutter build apk --release
+
+      - name: APK upload
         uses: actions/upload-artifact@v4
         with:
-          name: driver-app-apk
-          path: Smart_City_Ambulance/ambulance_alert_app/driver_app/build/app/outputs/flutter-apk/app-release.apk
-
-      # Upload Police App APK Artifact
-      - name: Upload Police App APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: police-app-apk
-          path: Smart_City_Ambulance/ambulance_alert_app/police_app/build/app/outputs/flutter-apk/app-release.apk
+          name: ${{ matrix.app }}-apk
+          path: ${{ env.BASE }}/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk
