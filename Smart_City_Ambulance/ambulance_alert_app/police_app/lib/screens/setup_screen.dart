@@ -7,7 +7,9 @@ import '../config.dart';
 import '../models.dart';
 import '../location_helper.dart';
 import '../profile.dart';
+import '../theme.dart';
 import 'dashboard_screen.dart';
+import 'help_screen.dart';
 import 'place_picker_screen.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -103,7 +105,16 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _useMap() async {
     final r = await Navigator.of(context).push<PlaceResult>(
       MaterialPageRoute(
-        builder: (_) => PlacePickerScreen(title: 'Choose your traffic area'),
+        builder: (_) => PlacePickerScreen(
+          initial: _loc,
+          title: 'Choose your post location',
+          hint: 'Type a chowk or place name',
+          chips: const [
+            PlaceChip('Police stations', 'police', BtnColors.blue),
+            PlaceChip('Chowks & Markets', 'market', BtnColors.brown),
+            PlaceChip('Hospitals', 'hospital', BtnColors.teal),
+          ],
+        ),
       ),
     );
     if (r == null || !mounted) return;
@@ -130,7 +141,7 @@ class _SetupScreenState extends State<SetupScreen> {
       _busy = true;
       _failed = false;
       _msg =
-          'Connecting to the server...\n(The first time can take 30-60 seconds)';
+          'Connecting to the server...\nThe first time can take up to 1 minute. Please wait.';
     });
     final ok = await Api.I.wakeServer();
     if (!mounted) return;
@@ -206,7 +217,7 @@ class _SetupScreenState extends State<SetupScreen> {
                         prefixIcon: Icon(Icons.badge),
                         border: OutlineInputBorder()),
                     validator: (v) => (v == null || v.trim().length < 2)
-                        ? 'Enter a name'
+                        ? 'Please enter your name'
                         : null,
                   ),
                   const SizedBox(height: 14),
@@ -214,37 +225,39 @@ class _SetupScreenState extends State<SetupScreen> {
                     controller: _post,
                     textCapitalization: TextCapitalization.words,
                     decoration: const InputDecoration(
-                        labelText: 'Post / junction name',
+                        labelText: 'Police post name (example: Station Road Chowk)',
                         prefixIcon: Icon(Icons.traffic),
                         border: OutlineInputBorder()),
                     validator: (v) => (v == null || v.trim().length < 2)
-                        ? 'Enter the post name'
+                        ? 'Please enter the post name'
                         : null,
                   ),
                   const SizedBox(height: 18),
-                  const Text('Your traffic area (location)',
+                  const Text('Where is your police post?',
                       style: TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
                   Row(children: [
                     Expanded(
-                      child: OutlinedButton.icon(
+                      child: FilledButton.icon(
+                        style: solidButton(BtnColors.teal),
                         onPressed: _gpsBusy ? null : _useGps,
                         icon: _gpsBusy
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
                                 child:
-                                    CircularProgressIndicator(strokeWidth: 2))
+                                    CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                             : const Icon(Icons.my_location),
-                        label: const Text('Use GPS'),
+                        label: const Text('USE MY GPS'),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: OutlinedButton.icon(
+                      child: FilledButton.icon(
+                        style: solidButton(BtnColors.indigo),
                         onPressed: _useMap,
                         icon: const Icon(Icons.map),
-                        label: const Text('Choose on map'),
+                        label: const Text('CHOOSE ON MAP'),
                       ),
                     ),
                   ]),
@@ -258,7 +271,7 @@ class _SetupScreenState extends State<SetupScreen> {
                       ),
                     ),
                   const SizedBox(height: 18),
-                  const Text('Alert area (radius)',
+                  const Text('How far should alerts reach?',
                       style: TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 6),
                   Wrap(
@@ -267,31 +280,32 @@ class _SetupScreenState extends State<SetupScreen> {
                         .map((r) => ChoiceChip(
                               label: Text('$r m'),
                               selected: _radius == r,
+                              selectedColor: const Color(0xFFFFCA28),
                               onSelected: (_) => setState(() => _radius = r),
                             ))
                         .toList(),
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Just set your location. When an ambulance route passes through your area, the app detects it automatically and alerts you.',
+                    'Just set where your post is. When an ambulance is coming through your area, this app tells you by voice and vibration.',
                     style: TextStyle(fontSize: 12, color: Colors.black54),
                   ),
                   ExpansionTile(
                     tilePadding: EdgeInsets.zero,
-                    title: const Text('Advanced (server / access code)'),
+                    title: const Text('Settings (server and access code)'),
                     children: [
                       TextFormField(
                         controller: _server,
                         keyboardType: TextInputType.url,
                         decoration: const InputDecoration(
-                            labelText: 'Server URL',
+                            labelText: 'Server address',
                             border: OutlineInputBorder()),
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _code,
                         decoration: const InputDecoration(
-                            labelText: 'Access code (if enabled on the server)',
+                            labelText: 'Access code (only if your admin gave you one)',
                             border: OutlineInputBorder()),
                       ),
                       const SizedBox(height: 8),
@@ -308,7 +322,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   const SizedBox(height: 6),
                   FilledButton(
                     onPressed: _busy ? null : _start,
-                    style: FilledButton.styleFrom(
+                    style: solidButton(BtnColors.olive,
                         padding: const EdgeInsets.symmetric(vertical: 16)),
                     child: _busy
                         ? const SizedBox(
@@ -317,6 +331,14 @@ class _SetupScreenState extends State<SetupScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2.5))
                         : const Text('START DUTY',
                             style: TextStyle(fontSize: 17)),
+                  ),
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    style: textColor(BtnColors.purple),
+                    onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const HelpScreen())),
+                    icon: const Icon(Icons.help_outline),
+                    label: const Text('How to use this app'),
                   ),
                 ],
               ),

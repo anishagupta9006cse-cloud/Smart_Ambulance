@@ -16,7 +16,11 @@ List<dynamic> _l(dynamic v) => v is List ? v : <dynamic>[];
 class PlaceResult {
   final String name;
   final LatLng point;
-  PlaceResult(this.name, this.point);
+  final String category; // hospital | police | transport | market | ... | other
+  final bool local; // true = saved in our own places database
+  final int? distance; // metres from the user (if known)
+  PlaceResult(this.name, this.point,
+      {this.category = 'other', this.local = false, this.distance});
 }
 
 class AlertAction {
@@ -28,11 +32,11 @@ class AlertAction {
   String get label {
     switch (action) {
       case 'ack':
-        return 'Alert acknowledged';
+        return 'Alert seen';
       case 'clear_lane':
-        return 'Lane clearance requested';
+        return 'Clearing the lane';
       case 'escalate':
-        return 'Escalated';
+        return 'Asked for help';
       default:
         return action;
     }

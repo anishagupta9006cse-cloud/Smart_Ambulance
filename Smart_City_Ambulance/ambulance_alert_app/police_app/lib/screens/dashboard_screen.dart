@@ -9,7 +9,9 @@ import '../api.dart';
 import '../geo.dart';
 import '../models.dart';
 import '../profile.dart';
+import '../theme.dart';
 import '../voice.dart';
+import 'help_screen.dart';
 import 'setup_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -138,7 +140,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _online = false;
         _netBanner = true;
-        _banner = 'Lost connection to server. Reconnecting...';
+        _banner = 'Connection lost. Trying again...';
       });
     }
   }
@@ -159,7 +161,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           a.status == 'test') {
         if (changed || repeatDue) _announce(a, key);
       } else if (a.status == 'passed' && changed) {
-        Voice.I.speak('Ambulance has passed. Alert muted.');
+        Voice.I.speak('The ambulance has passed. The alert is off now.');
       }
       _lastStatus[key] = a.status;
     }
@@ -174,9 +176,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (a.status == 'test') {
       Voice.I.speak('This is a test alert.');
     } else if (a.status == 'imminent') {
-      Voice.I.speak('Attention! Ambulance is very close. Clear the road immediately.');
+      Voice.I.speak('Attention! Ambulance is very close. Clear the road now.');
     } else {
-      Voice.I.speak('Attention! Ambulance approaching, about $d meters away. Please clear the road.');
+      Voice.I.speak('Attention! An ambulance is coming, about $d meters away. Please clear the road.');
     }
   }
 
@@ -231,10 +233,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       await Api.I.action(_p.id, a.tripId, action, _p.officer);
       _snack(action == 'ack'
-          ? 'Alert acknowledged — visible to driver.'
+          ? 'Done. The driver can see that you got the alert.'
           : action == 'clear_lane'
-              ? 'Lane clearance request recorded.'
-              : 'Escalation recorded successfully.');
+              ? 'Done. The driver can see you are clearing the lane.'
+              : 'Done. Your request for help is saved.');
       await _poll();
     } catch (e) {
       _snack(e.toString());
@@ -247,15 +249,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('End Duty?'),
-        content: const Text('This post will stop receiving live alerts.'),
+        title: const Text('Finish duty?'),
+        content: const Text('This post will not get ambulance alerts any more.'),
         actions: [
           TextButton(
+              style: textColor(BtnColors.teal),
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('No')),
+              child: const Text('No, stay on duty')),
           FilledButton(
+              style: solidButton(BtnColors.brown),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Yes')),
+              child: const Text('Yes, finish')),
         ],
       ),
     );
@@ -291,15 +295,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'imminent':
         return 'AMBULANCE VERY CLOSE!';
       case 'approaching':
-        return 'AMBULANCE APPROACHING';
+        return 'AMBULANCE IS COMING';
       case 'paused':
-        return 'ALERT PAUSED (GPS / Route Issue)';
+        return 'ALERT ON HOLD (no GPS signal)';
       case 'test':
         return 'TEST ALERT';
       case 'passed':
-        return 'AMBULANCE PASSED • Alert Muted';
+        return 'AMBULANCE HAS PASSED';
       default:
-        return 'AMBULANCE ON ROUTE (Upcoming)';
+        return 'AMBULANCE WILL COME THIS WAY LATER';
     }
   }
 
@@ -345,7 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         style: TextStyle(
                             fontWeight: FontWeight.w800,
                             color: hot ? Colors.white : Colors.black87)),
-                    Text('${_p.officer} • Radius ${_p.radius} m',
+                    Text('${_p.officer} • Alert distance ${_p.radius} m',
                         style: TextStyle(
                             fontSize: 12,
                             color: hot ? Colors.white70 : Colors.black54)),
@@ -360,12 +364,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buzz();
                 }
                 if (v == 'duty') _endDuty();
+                if (v == 'help') {
+                  Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const HelpScreen()));
+                }
               },
               itemBuilder: (_) => const [
+                PopupMenuItem(value: 'help', child: Text('How to use')),
                 PopupMenuItem(
-                    value: 'voice',
-                    child: Text('Test voice alert (on this phone)')),
-                PopupMenuItem(value: 'duty', child: Text('End Duty')),
+                    value: 'voice', child: Text('Test sound and voice')),
+                PopupMenuItem(value: 'duty', child: Text('Finish duty')),
               ],
             ),
           ]),
@@ -374,7 +382,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       const SizedBox(height: 8),
       Row(children: [
         _online
-            ? _chip(Icons.wifi_tethering, 'LIVE Monitoring', Colors.green)
+            ? _chip(Icons.wifi_tethering, 'Watching for ambulances', Colors.green)
             : _chip(Icons.sync_problem, 'Connecting...', Colors.orange),
       ]),
       if (_banner != null)
@@ -416,10 +424,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 3),
         child: FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor: done ? Colors.green : color,
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
-          ),
+          style: solidButton(color,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4)),
           onPressed: (_actionBusy || done) ? null : () => _act(a, action),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Icon(done ? Icons.check_circle : icon,
@@ -466,8 +472,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 12),
           if (a.status != 'passed')
             Row(children: [
-              _stat('Distance Ahead', fmtDist(a.distAhead)),
-              _stat('ETA (Time Left)', fmtDur(a.etaSec)),
+              _stat('Distance', fmtDist(a.distAhead)),
+              _stat('Time to reach you', fmtDur(a.etaSec)),
             ]),
           const SizedBox(height: 8),
           Text(
@@ -478,22 +484,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const Padding(
               padding: EdgeInsets.only(top: 6),
               child: Text(
-                  'Ambulance GPS signal lost or off-route. Follow standard procedure.',
+                  'The ambulance GPS signal is lost, or it left the route. Please follow your normal duty steps.',
                   style: TextStyle(fontSize: 12, color: Colors.purple)),
             ),
           if (canAct) ...[
             const SizedBox(height: 12),
             Row(children: [
-              _actionButton(a, 'ack', Icons.visibility, 'ACKNOWLEDGED',
-                  Colors.blue.shade700),
+              _actionButton(a, 'ack', Icons.visibility, 'I SAW IT',
+                  BtnColors.blue),
               _actionButton(a, 'clear_lane', Icons.alt_route,
-                  'CLEAR LANE\nREQUESTED', Colors.orange.shade800),
-              _actionButton(a, 'escalate', Icons.priority_high, 'ESCALATE',
-                  Colors.red.shade700),
+                  'CLEARING\nTHE LANE', BtnColors.orange),
+              _actionButton(a, 'escalate', Icons.priority_high, 'NEED HELP',
+                  BtnColors.red),
             ]),
             const SizedBox(height: 6),
             const Text(
-              'These buttons send records only. Physical traffic signals require manual authority action.',
+              'These buttons only send a message to the driver. They do not change traffic lights.',
               style: TextStyle(fontSize: 11, color: Colors.black45),
             ),
           ],
@@ -512,12 +518,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Monitoring active',
+                  'You are on duty',
                   style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'No ambulance is heading towards your area currently.',
+                  'No ambulance is coming towards your area right now.',
                   style: TextStyle(fontSize: 13, color: Colors.black54),
                 ),
               ],
@@ -545,7 +551,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (others.isNotEmpty) ...[
             const Divider(height: 22),
             Text(
-              'Other ambulances (${others.length}) waiting...',
+              'More ambulances coming: ${others.length}',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
           ],
@@ -609,6 +615,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       floatingActionButton: !_autoFit
           ? FloatingActionButton.small(
+              backgroundColor: BtnColors.cyan,
+              foregroundColor: Colors.white,
               onPressed: _centerOnPost,
               child: const Icon(Icons.my_location),
             )
