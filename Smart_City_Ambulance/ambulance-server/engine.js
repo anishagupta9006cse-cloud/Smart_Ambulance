@@ -14,6 +14,7 @@ const CFG = {
   ARRIVE_M: 40,
   TRIP_IDLE_END_MS: 10 * 60 * 1000,
   TRIP_KEEP_MS: 30 * 60 * 1000,
+  POST_STALE_MS: (Number(process.env.POST_STALE_SECONDS) || 180) * 1000, // police phone silent this long => post is offline
 };
 
 const posts = new Map();
@@ -21,6 +22,7 @@ const trips = new Map();
 const tests = new Map(); // postId -> { tripId, until }
 const events = [];
 let notifier = () => {};
+let persist = { post() {}, tripEnd() {} }; // filled by server.js (saves to the database)
 
 const now = () => Date.now();
 const rid = (p) => p + Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -41,6 +43,22 @@ function logEvent(type, data) {
   if (events.length > 500) events.splice(0, events.length - 500);
 }
 function setNotifier(fn) { notifier = typeof fn === 'function' ? fn : () => {}; }
+function setPersist(p) { persist = { ...persist, ...p }; }
+function loadPosts(list) {
+  for (const p of list || []) {
+    if (p && p.id && validPoint(Number(p.lat), Number(p.lng))) posts.set(p.id, { ...p, lastSeen: 0 }); // offline until the police app connects again
+  }
+}
+function allPosts() { return [...posts.values()]; }
+function deletePost(id) { return posts.delete(id); }
+function tripSummary(trip) {
+  return {
+    id: trip.id, ambulanceId: trip.ambulanceId, driverName: trip.driverName, destination: trip.destName,
+    startedAt: trip.startedAt, endedAt: trip.endedAt || now(), status: trip.status,
+    distance: Math.round(trip.route.total), travelled: Math.round(trip.chain),
+  };
+}
+function recordTripEnd(trip) { try { persist.tripEnd(tripSummary(trip)); } catch (_) {} }
 
 // ---------------- posts ----------------
 function upsertPost(b) {
@@ -60,18 +78,19 @@ function upsertPost(b) {
     registeredAt: old ? old.registeredAt : now(),
   };
   posts.set(id, post);
+  try { persist.post(post); } catch (_) {}
   logEvent('post_registered', { postId: id, name: post.name });
   return post;
 }
 function setOffDuty(postId) {
   const p = posts.get(postId);
-  if (p) { p.onDuty = false; logEvent('post_offduty', { postId }); }
+  if (p) { p.onDuty = false; try { persist.post(p); } catch (_) {} logEvent('post_offduty', { postId }); }
 }
 
 // ---------------- trips ----------------
 function startTrip({ driverName, ambulanceId, from, to, routeData, destinationName }) {
   for (const t of trips.values()) {
-    if (t.active && t.ambulanceId === ambulanceId) { t.active = false; t.status = 'stopped'; t.endedAt = now(); }
+    if (t.active && t.ambulanceId === ambulanceId) { t.active = false; t.status = 'stopped'; t.endedAt = now(); recordTripEnd(t); }
   }
   const t0 = now();
   const trip = {
@@ -116,7 +135,7 @@ function postRouteInfo(trip, post) {
 
 // status of one post relative to one trip (null = not relevant)
 function evalPost(trip, post, t) {
-  if (!post.onDuty) return null;
+  if (!post.onDuty || t - post.lastSeen > CFG.POST_STALE_MS) return null; // off duty or phone offline
   const info = postRouteInfo(trip, post);
   if (!info.onRoute) return null;
   const ps = getPS(trip, post.id);
@@ -191,6 +210,7 @@ function updateLocation(tripId, b) {
     }
     if (trip.route.total - trip.chain < CFG.ARRIVE_M) {
       trip.active = false; trip.status = 'completed'; trip.endedAt = t;
+      recordTripEnd(trip);
       logEvent('trip_completed', { tripId });
     }
   }
@@ -200,7 +220,7 @@ function updateLocation(tripId, b) {
 
 function stopTrip(tripId) {
   const trip = getTrip(tripId);
-  if (trip.active) { trip.active = false; trip.status = 'stopped'; trip.endedAt = now(); logEvent('trip_stopped', { tripId }); }
+  if (trip.active) { trip.active = false; trip.status = 'stopped'; trip.endedAt = now(); recordTripEnd(trip); logEvent('trip_stopped', { tripId }); }
   for (const post of posts.values()) notifier({ room: 'post:' + post.id, event: 'refresh' });
   return trip;
 }
@@ -303,7 +323,7 @@ function alertsForPost(postId) {
 
 function testAlert(trip) {
   const t = now();
-  const all = [...posts.values()].filter((p) => p.onDuty && t - p.lastSeen < 5 * 60 * 1000);
+  const all = [...posts.values()].filter((p) => p.onDuty && t - p.lastSeen < CFG.POST_STALE_MS);
   const onRoute = all.filter((p) => postRouteInfo(trip, p).onRoute);
   const targets = onRoute.length ? onRoute : all;
   for (const p of targets) {
@@ -335,6 +355,7 @@ function sweep() {
   for (const [id, trip] of trips) {
     if (trip.active && t - trip.lastUpdate > CFG.TRIP_IDLE_END_MS) {
       trip.active = false; trip.status = 'stopped'; trip.endedAt = t;
+      recordTripEnd(trip);
       logEvent('trip_idle_ended', { tripId: id });
     }
     if (!trip.active && t - (trip.endedAt || trip.lastUpdate) > CFG.TRIP_KEEP_MS) trips.delete(id);
@@ -351,7 +372,7 @@ function stats() {
 }
 
 module.exports = {
-  CFG, httpError, clean, validPoint, setNotifier,
+  CFG, httpError, clean, validPoint, setNotifier, setPersist, loadPosts, allPosts, deletePost,
   upsertPost, setOffDuty, startTrip, getTrip, updateLocation, stopTrip, replaceRoute,
   tripView, alertsForPost, testAlert, postAction, sweep, stats,
 };
