@@ -8,6 +8,7 @@ const engine = require('./engine');
 const routing = require('./routing');
 const { Store } = require('./db');
 const places = require('./places');
+const iot = require('./iot');
 
 const store = new Store();
 
@@ -22,6 +23,7 @@ io.on('connection', (socket) => {
   socket.on('join_trip', (id) => { if (typeof id === 'string') socket.join('trip:' + id); });
 });
 engine.setNotifier(({ room, event }) => io.to(room).emit(event, { t: Date.now() }));
+engine.setIotHook((ev) => iot.onEngineEvent(ev)); // alerts switch the IoT display + buzzer of the police post automatically
 
 // ---- optional access codes (set DRIVER_CODE / POLICE_CODE in Render env to enable) ----
 const DRIVER_CODE = process.env.DRIVER_CODE || '';
@@ -201,6 +203,42 @@ app.post('/api/posts/:id/offduty', guard('police'), wrap(async (req, res) => {
   engine.setOffDuty(req.params.id);
   res.json({ ok: true });
 }));
+
+// ---- driver extras: priority + quick message to police ----
+app.post('/api/trips/:id/priority', guard('driver'), wrap(async (req, res) => {
+  res.json({ ok: true, priority: engine.setPriority(req.params.id, String((req.body || {}).priority || '')) });
+}));
+app.post('/api/trips/:id/message', guard('driver'), wrap(async (req, res) => {
+  res.json({ ok: true, message: engine.setMessage(req.params.id, String((req.body || {}).text || '')) });
+}));
+
+// ---- police posts that are online (driver map shows them all, not only the ones on the route) ----
+app.get('/api/posts/online', guard('any'), limit(60), (req, res) => res.json({ ok: true, posts: engine.onlinePosts() }));
+
+// ---- IoT devices (ESP32 etc.): display + buzzer ----
+// device id = police post id (post device) or ambulance number (ambulance device)
+app.get('/api/iot/:id/state', guard('any'), limit(400), (req, res) => {
+  const st = iot.deviceState(req.params.id);
+  if (!st) return res.status(400).json({ error: 'Invalid device ID.', code: 'BAD_DEVICE' });
+  res.json(st);
+});
+app.get('/api/iot/:id', guard('any'), limit(120), (req, res) => res.json({ ok: true, device: iot.getView(req.params.id) }));
+app.post('/api/iot/:id/command', guard('any'), limit(60), wrap(async (req, res) => {
+  const b = req.body || {};
+  res.json({ ok: true, device: iot.command(req.params.id, b, cleanTxt(b.by, 40)) });
+}));
+// driver -> all police devices that are on the ambulance route
+app.post('/api/trips/:id/iot', guard('driver'), limit(60), wrap(async (req, res) => {
+  const trip = engine.getTrip(req.params.id);
+  const b = req.body || {};
+  const ids = engine.routePostIds(trip);
+  const cmd = {};
+  if ('display' in b) cmd.display = b.display;
+  if ('buzzer' in b) cmd.buzzer = b.buzzer;
+  for (const id of ids) iot.command(id, cmd, 'Driver ' + cleanTxt(trip.ambulanceId, 20));
+  res.json({ ok: true, count: ids.length });
+}));
+app.get('/api/admin/iot', adminGuard, (req, res) => res.json({ ok: true, devices: iot.listDevices() }));
 
 // ---- admin (data entry) ----
 const cleanTxt = (v, n) => engine.clean(typeof v === 'string' ? v : '', n);

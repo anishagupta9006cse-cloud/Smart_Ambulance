@@ -1,6 +1,6 @@
 'use strict';
 // Core alert logic: trips, police posts, forward-only alerts, auto-mute. No network deps.
-const { projectOnRoute, routeSlice } = require('./geo');
+const { projectOnRoute, routeSlice, haversine } = require('./geo');
 
 const CFG = {
   ALERT_DIST: Number(process.env.ALERT_DISTANCE_M) || 1500, // "approaching" at this distance ahead
@@ -22,6 +22,7 @@ const trips = new Map();
 const tests = new Map(); // postId -> { tripId, until }
 const events = [];
 let notifier = () => {};
+let iotHook = () => {}; // filled by server.js: switches the IoT display / buzzer of a police post
 let persist = { post() {}, tripEnd() {} }; // filled by server.js (saves to the database)
 
 const now = () => Date.now();
@@ -43,6 +44,14 @@ function logEvent(type, data) {
   if (events.length > 500) events.splice(0, events.length - 500);
 }
 function setNotifier(fn) { notifier = typeof fn === 'function' ? fn : () => {}; }
+function setIotHook(fn) { iotHook = typeof fn === 'function' ? fn : () => {}; }
+function fireIot(ev) { try { iotHook(ev); } catch (_) {} }
+// switch off the IoT devices of every post that was alerted by this trip and has not been "passed" yet
+function clearIotForTrip(trip) {
+  for (const [pid, ps] of Object.entries(trip.postState)) {
+    if (ps.seen && !ps.passedAt) fireIot({ postId: pid, event: 'clear' });
+  }
+}
 function setPersist(p) { persist = { ...persist, ...p }; }
 function loadPosts(list) {
   for (const p of list || []) {
@@ -90,7 +99,7 @@ function setOffDuty(postId) {
 // ---------------- trips ----------------
 function startTrip({ driverName, ambulanceId, from, to, routeData, destinationName }) {
   for (const t of trips.values()) {
-    if (t.active && t.ambulanceId === ambulanceId) { t.active = false; t.status = 'stopped'; t.endedAt = now(); recordTripEnd(t); }
+    if (t.active && t.ambulanceId === ambulanceId) { t.active = false; t.status = 'stopped'; t.endedAt = now(); recordTripEnd(t); clearIotForTrip(t); }
   }
   const t0 = now();
   const trip = {
@@ -106,6 +115,7 @@ function startTrip({ driverName, ambulanceId, from, to, routeData, destinationNa
     active: true, status: 'ok',
     pos: from, speed: 0, chain: 0, lastIdx: 0,
     offRoute: false, offRouteCount: 0,
+    priority: 'normal', message: null,
     postState: {}, postInfoCache: {},
   };
   trips.set(trip.id, trip);
@@ -202,15 +212,18 @@ function updateLocation(tripId, b) {
       const ps = ev.ps;
       if (ev.status === 'approaching' || ev.status === 'imminent') {
         if (!ps.seen) { ps.seen = true; logEvent('alert_dispatched', { tripId, postId: post.id }); }
+        fireIot({ postId: post.id, event: 'alert', status: ev.status, priority: trip.priority });
       }
       if (ps.seen && !ps.passedAt && ev.distAhead < -CFG.PASS_MARGIN) {
         ps.passedAt = t;
         logEvent('post_passed_automute', { tripId, postId: post.id });
+        fireIot({ postId: post.id, event: 'clear' });
       }
     }
     if (trip.route.total - trip.chain < CFG.ARRIVE_M) {
       trip.active = false; trip.status = 'completed'; trip.endedAt = t;
       recordTripEnd(trip);
+      clearIotForTrip(trip);
       logEvent('trip_completed', { tripId });
     }
   }
@@ -220,7 +233,7 @@ function updateLocation(tripId, b) {
 
 function stopTrip(tripId) {
   const trip = getTrip(tripId);
-  if (trip.active) { trip.active = false; trip.status = 'stopped'; trip.endedAt = now(); recordTripEnd(trip); logEvent('trip_stopped', { tripId }); }
+  if (trip.active) { trip.active = false; trip.status = 'stopped'; trip.endedAt = now(); recordTripEnd(trip); clearIotForTrip(trip); logEvent('trip_stopped', { tripId }); }
   for (const post of posts.values()) notifier({ room: 'post:' + post.id, event: 'refresh' });
   return trip;
 }
@@ -272,6 +285,7 @@ function tripView(trip) {
     chain: Math.round(trip.chain), total: Math.round(trip.route.total),
     remaining: Math.round(remaining), etaSec: etaSeconds(trip, remaining),
     nextJunction: nextJunction(trip),
+    priority: trip.priority,
     posts: postsView,
     actions: actions.slice(0, 8),
     serverTime: t,
@@ -287,6 +301,9 @@ function alertObject(trip, post, ev, status, isTest) {
   return {
     tripId: trip.id, ambulanceId: trip.ambulanceId, driverName: trip.driverName,
     status, test: !!isTest,
+    priority: trip.priority,
+    message: trip.message ? { text: trip.message.text, at: trip.message.at } : null,
+    speedKmh: Math.round((trip.speed || 0) * 3.6),
     distAhead, etaSec: etaSeconds(trip, distAhead),
     amb: { lat: trip.pos.lat, lng: trip.pos.lng },
     destination: trip.destName,
@@ -318,7 +335,7 @@ function alertsForPost(postId) {
     }
   }
   out.sort((a, b) => a.distAhead - b.distAhead);
-  return { ok: true, serverTime: t, post: { id: post.id, name: post.name, onDuty: post.onDuty }, alerts: out };
+  return { ok: true, serverTime: t, post: { id: post.id, name: post.name, onDuty: post.onDuty }, alerts: out, ambulances: post.onDuty ? liveAmbulances(post) : [] };
 }
 
 function testAlert(trip) {
@@ -329,6 +346,7 @@ function testAlert(trip) {
   for (const p of targets) {
     tests.set(p.id, { tripId: trip.id, until: t + CFG.TEST_ALERT_MS });
     notifier({ room: 'post:' + p.id, event: 'refresh' });
+    fireIot({ postId: p.id, event: 'test' });
   }
   logEvent('test_alert', { tripId: trip.id, count: targets.length });
   return targets.length;
@@ -350,12 +368,76 @@ function postAction(postId, b) {
   return { ok: true, actions: ps.actions };
 }
 
+// ---------------- extra features ----------------
+// Every ambulance that is driving right now (any route), nearest to the post first. Shown on the police map.
+function liveAmbulances(post) {
+  const t = now();
+  const out = [];
+  for (const trip of trips.values()) {
+    if (!trip.active) continue;
+    const age = Math.round((t - trip.lastUpdate) / 1000);
+    if (age > 120) continue; // GPS lost for 2 minutes: do not show an old position
+    out.push({
+      tripId: trip.id, ambulanceId: trip.ambulanceId, driverName: trip.driverName,
+      lat: trip.pos.lat, lng: trip.pos.lng,
+      speedKmh: Math.round((trip.speed || 0) * 3.6),
+      priority: trip.priority, destination: trip.destName, gpsAgeSec: age,
+      distToPost: Math.round(haversine(trip.pos, post)),
+      etaSec: etaSeconds(trip, Math.max(0, haversine(trip.pos, post))),
+    });
+  }
+  out.sort((a, b) => a.distToPost - b.distToPost);
+  return out.slice(0, 15);
+}
+
+// Police posts that are on duty and whose phone is online (shown on the driver's map, even when they are not on the route)
+function onlinePosts() {
+  const t = now();
+  return [...posts.values()]
+    .filter((p) => p.onDuty && t - p.lastSeen < CFG.POST_STALE_MS)
+    .map((p) => ({ id: p.id, name: p.name, area: p.area, lat: p.lat, lng: p.lng, radius: p.radius }));
+}
+
+// Ids of police posts that are on this trip's route and still ahead (used to command their IoT devices)
+function routePostIds(trip) {
+  const t = now();
+  const ids = [];
+  for (const post of posts.values()) {
+    const ev = evalPost(trip, post, t);
+    if (!ev || ev.status === 'expired' || ev.status === 'passed') continue;
+    ids.push(post.id);
+  }
+  return ids;
+}
+
+function setPriority(tripId, priority) {
+  const trip = getTrip(tripId);
+  const p = priority === 'critical' ? 'critical' : 'normal';
+  if (trip.priority !== p) {
+    trip.priority = p;
+    logEvent('trip_priority', { tripId, priority: p });
+    notifyPosts(trip);
+  }
+  return p;
+}
+
+const QUICK_MESSAGES_MAX = 80;
+function setMessage(tripId, text) {
+  const trip = getTrip(tripId);
+  const msg = clean(text, QUICK_MESSAGES_MAX);
+  trip.message = msg ? { text: msg, at: now() } : null;
+  logEvent('trip_message', { tripId });
+  notifyPosts(trip);
+  return trip.message;
+}
+
 function sweep() {
   const t = now();
   for (const [id, trip] of trips) {
     if (trip.active && t - trip.lastUpdate > CFG.TRIP_IDLE_END_MS) {
       trip.active = false; trip.status = 'stopped'; trip.endedAt = t;
       recordTripEnd(trip);
+      clearIotForTrip(trip);
       logEvent('trip_idle_ended', { tripId: id });
     }
     if (!trip.active && t - (trip.endedAt || trip.lastUpdate) > CFG.TRIP_KEEP_MS) trips.delete(id);
@@ -373,6 +455,7 @@ function stats() {
 
 module.exports = {
   CFG, httpError, clean, validPoint, setNotifier, setPersist, loadPosts, allPosts, deletePost,
+  setIotHook, liveAmbulances, onlinePosts, routePostIds, setPriority, setMessage,
   upsertPost, setOffDuty, startTrip, getTrip, updateLocation, stopTrip, replaceRoute,
   tripView, alertsForPost, testAlert, postAction, sweep, stats,
 };
