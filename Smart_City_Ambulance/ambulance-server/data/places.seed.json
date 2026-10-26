@@ -1,6 +1,0 @@
-[
-  { "id": "seed-biharsharif-centre", "name": "Bihar Sharif City Centre", "category": "area", "area": "Bihar Sharif", "lat": 25.1974, "lng": 85.5176, "aliases": ["biharsharif", "bihar sharif", "bihar sharif town", "nalanda district headquarters"], "approx": true },
-  { "id": "seed-nalanda-netralaya", "name": "Nalanda Netralaya and Maternity Home", "category": "hospital", "area": "Doctors Colony, Khandakpar, Bihar Sharif", "lat": 25.19895, "lng": 85.52958, "aliases": ["netralaya", "nalanda eye hospital", "maternity home"], "approx": true },
-  { "id": "seed-nalanda-ruins", "name": "Nalanda Ancient Ruins (Mahavihara)", "category": "landmark", "area": "Nalanda", "lat": 25.1357, "lng": 85.4430, "aliases": ["nalanda mahavihara", "nalanda university ruins", "nalanda khandhar"], "approx": true },
-  { "id": "seed-rajgir", "name": "Rajgir", "category": "area", "area": "Rajgir, Nalanda", "lat": 25.0285, "lng": 85.4206, "aliases": ["rajgriha", "rajgir town"], "approx": true }
-]
