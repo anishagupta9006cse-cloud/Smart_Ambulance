@@ -1,0 +1,94 @@
+name: Build Driver + Police APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: driver_app
+            label: "AmbuRoute Driver"
+          - app: police_app
+            label: "AmbuRoute Police"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # Finds the app folder wherever it is (repo root can be Smart_City_Ambulance OR ambulance_alert_app).
+      # If the repo has MORE THAN ONE copy (old + new), the build stops and lists them,
+      # so an old copy can never be built by mistake.
+      - name: Find app folder
+        run: |
+          MATCHES=$(find . -type f -path "*/${{ matrix.app }}/pubspec.yaml" -not -path "*/node_modules/*" -not -path "./.git/*" -not -path "*/build/*")
+          COUNT=$(echo "$MATCHES" | grep -c . || true)
+          echo "Copies found: $COUNT"
+          echo "$MATCHES"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: ${{ matrix.app }} not found. Folders in this repo:"
+            find . -maxdepth 3 -type d -not -path "./.git*" | head -50
+            exit 1
+          fi
+          if [ "$COUNT" -gt 1 ]; then
+            echo "ERROR: more than one ${{ matrix.app }} in this repo (listed above). Delete the OLD copy from GitHub and run again."
+            exit 1
+          fi
+          APP_DIR=$(dirname "$MATCHES")
+          TOOLS_DIR="$(dirname "$APP_DIR")/tools"
+          test -f "$TOOLS_DIR/patch_android.py" || { echo "ERROR: patch_android.py missing in $TOOLS_DIR"; exit 1; }
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "TOOLS_DIR=$TOOLS_DIR" >> "$GITHUB_ENV"
+          echo "Building: $APP_DIR"
+
+      - name: Show what is being built
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          echo "Server address inside this app:"
+          grep -n "defaultValue" lib/config.dart || true
+          echo "Screens in this app:"
+          ls lib/screens || ls lib
+
+      - name: Create android folder and add permissions
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          cp -r lib /tmp/lib_backup
+          cp pubspec.yaml /tmp/pubspec_backup.yaml
+          flutter create --platforms=android --org com.amburoute --project-name ${{ matrix.app }} .
+          rm -rf lib test
+          cp -r /tmp/lib_backup lib
+          cp /tmp/pubspec_backup.yaml pubspec.yaml
+          python3 "${{ github.workspace }}/${{ env.TOOLS_DIR }}/patch_android.py" android/app/src/main/AndroidManifest.xml "${{ matrix.label }}"
+
+      - name: Packages download
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+
+      # Errors stop the build. Style hints (info) and warnings do not.
+      - name: Check code
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: APK build
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter build apk --release
+
+      # Run number in the name, so you always know you downloaded the newest build.
+      - name: APK upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-apk-run${{ github.run_number }}
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
