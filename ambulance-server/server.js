@@ -215,13 +215,42 @@ app.post('/api/trips/:id/message', guard('driver'), wrap(async (req, res) => {
 // ---- police posts that are online (driver map shows them all, not only the ones on the route) ----
 app.get('/api/posts/online', guard('any'), limit(60), (req, res) => res.json({ ok: true, posts: engine.onlinePosts() }));
 
-// ---- IoT devices (ESP32 etc.): display + buzzer ----
+// ---- IoT devices (ESP32 Super Mini, Neo-6M GPS, OLED, Buzzer, LED) ----
 // device id = police post id (post device) or ambulance number (ambulance device)
 app.get('/api/iot/:id/state', guard('any'), limit(400), (req, res) => {
   const st = iot.deviceState(req.params.id);
   if (!st) return res.status(400).json({ error: 'Invalid device ID.', code: 'BAD_DEVICE' });
   res.json(st);
 });
+
+// Telemetry from ESP32 GPS module (lat, lng, speed, sats, fix) -> sends telemetry, receives commands
+app.post('/api/iot/:id/telemetry', guard('any'), limit(400), wrap(async (req, res) => {
+  const b = req.body || {};
+  const result = iot.recordTelemetry(req.params.id, b);
+  // If this device ID matches an active ambulance trip, auto-update the trip location!
+  if (b.fix && Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng))) {
+    const devId = String(req.params.id || '').trim().toUpperCase();
+    const activeTrips = engine.activeTrips();
+    const match = activeTrips.find((t) => (t.ambulanceId || '').toUpperCase() === devId);
+    if (match) {
+      try {
+        engine.updateLocation(match.id, {
+          lat: Number(b.lat),
+          lng: Number(b.lng),
+          speed: Math.max(0, Number(b.speed) || 0),
+          acc: 5,
+        });
+      } catch (_) {}
+    }
+  }
+  res.json(result);
+}));
+
+app.get('/api/iot/:id/telemetry', guard('any'), limit(120), (req, res) => {
+  const v = iot.getView(req.params.id);
+  res.json({ ok: true, device: v, telemetry: v.telemetry });
+});
+
 app.get('/api/iot/:id', guard('any'), limit(120), (req, res) => res.json({ ok: true, device: iot.getView(req.params.id) }));
 app.post('/api/iot/:id/command', guard('any'), limit(60), wrap(async (req, res) => {
   const b = req.body || {};
@@ -235,10 +264,68 @@ app.post('/api/trips/:id/iot', guard('driver'), limit(60), wrap(async (req, res)
   const cmd = {};
   if ('display' in b) cmd.display = b.display;
   if ('buzzer' in b) cmd.buzzer = b.buzzer;
+  if ('led' in b) cmd.led = b.led;
   for (const id of ids) iot.command(id, cmd, 'Driver ' + cleanTxt(trip.ambulanceId, 20));
   res.json({ ok: true, count: ids.length });
 }));
 app.get('/api/admin/iot', adminGuard, (req, res) => res.json({ ok: true, devices: iot.listDevices() }));
+
+// ---- Pre Bed Booked & Pre-Trip Gate Inspection ----
+const bedBookings = new Map();
+const gateInspections = new Map();
+
+app.post('/api/trips/:id/bed-booking', guard('any'), limit(120), wrap(async (req, res) => {
+  const trip = engine.getTrip(req.params.id);
+  const b = req.body || {};
+  const booking = {
+    tripId: trip.id,
+    ambulanceId: trip.ambulanceId,
+    hospitalName: cleanTxt(b.hospitalName, 100) || trip.destinationName || 'Receiving Hospital',
+    bedType: cleanTxt(b.bedType, 60) || 'Emergency ICU Bed',
+    patientBrief: cleanTxt(b.patientBrief, 200),
+    contactPhone: cleanTxt(b.contactPhone, 20),
+    status: 'CONFIRMED',
+    bookedAt: Date.now(),
+  };
+  bedBookings.set(trip.id, booking);
+  res.json({ ok: true, booking });
+}));
+
+app.get('/api/trips/:id/bed-booking', guard('any'), limit(120), wrap(async (req, res) => {
+  const trip = engine.getTrip(req.params.id);
+  const booking = bedBookings.get(trip.id) || null;
+  res.json({ ok: true, booking });
+}));
+
+app.post('/api/gate-inspection', guard('any'), limit(60), wrap(async (req, res) => {
+  const b = req.body || {};
+  const ambulanceId = (cleanTxt(b.ambulanceId, 20) || 'AMB').toUpperCase();
+  const report = {
+    ambulanceId,
+    driverName: cleanTxt(b.driverName, 40) || 'Driver',
+    checklist: b.checklist || {},
+    status: 'APPROVED_ON_GATE',
+    submittedAt: Date.now(),
+  };
+  gateInspections.set(ambulanceId, report);
+  res.json({ ok: true, report });
+}));
+
+app.get('/api/gate-inspection/:ambulanceId', guard('any'), limit(60), (req, res) => {
+  const id = String(req.params.ambulanceId || '').toUpperCase();
+  const report = gateInspections.get(id) || null;
+  res.json({ ok: true, report });
+});
+
+app.get('/api/hospitals/directory', guard('any'), limit(60), (req, res) => {
+  const directory = [
+    { name: 'Sadar Hospital Central Emergency', emergencyPhone: '102 / 0612-2200111', bedsAvailable: { icu: 4, trauma: 6, general: 15 }, specialties: ['Level 2 Trauma', 'General ER', 'ICU', 'Oxygen Support'] },
+    { name: 'AIIMS Apex Emergency & Trauma Center', emergencyPhone: '0612-2451000', bedsAvailable: { icu: 2, trauma: 4, general: 8 }, specialties: ['Level 1 Trauma', 'Stroke Center', 'Cath Lab (STEMI)', 'Pediatric ICU'] },
+    { name: 'PMCH Emergency Department', emergencyPhone: '0612-2300080', bedsAvailable: { icu: 3, trauma: 8, general: 20 }, specialties: ['Trauma OT', 'Cardiac ICU', 'Poisoning Unit', 'Blood Bank'] },
+    { name: 'IGIMS Medical Emergency', emergencyPhone: '0612-2297631', bedsAvailable: { icu: 5, trauma: 5, general: 12 }, specialties: ['Advanced Neuro', 'Pulmonary Critical Care', 'Dialysis Emergency'] },
+  ];
+  res.json({ ok: true, hospitals: directory });
+});
 
 // ---- admin (data entry) ----
 const cleanTxt = (v, n) => engine.clean(typeof v === 'string' ? v : '', n);

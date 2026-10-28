@@ -72,4 +72,12 @@ const al = E.alertsForPost(post.id).alerts.find((a) => a.tripId === trip2.id);
 assert.ok(al && al.message && al.message.text === 'Patient critical b', 'message reaches police alert');
 assert.ok(E.routePostIds(trip2).includes(post.id), 'post is on the route');
 
+// 6) LED light & GPS Telemetry from ESP32
+let vLed = IOT.command('POST-A', { led: { pattern: 'strobe', seconds: 15 } });
+assert.ok(vLed.led.on && vLed.led.pattern === 'strobe', 'LED strobe command works');
+
+let tel = IOT.recordTelemetry('AMB-7', { lat: 25.01, lng: 85.02, speed: 45, altitude: 60, sats: 9, fix: true });
+assert.ok(tel.ok && tel.telemetry.fix && tel.telemetry.sats === 9, 'telemetry recorded');
+assert.strictEqual(IOT.getView('AMB-7').telemetry.speed, 45, 'telemetry saved in device view');
+
 console.log('ALL IOT TESTS PASSED');

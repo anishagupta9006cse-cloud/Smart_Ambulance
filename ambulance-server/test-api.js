@@ -56,6 +56,37 @@ const admin = { 'x-admin-code': 'secret123' };
     const ok = await call('POST', '/api/trips/start', { ambulanceId: 'amb-101', driverName: 'Ravi', from: { lat: 25.2, lng: 85.5 }, to: { lat: 25.21, lng: 85.53 }, destinationName: 'Sadar Hospital' });
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
     await call('POST', '/api/posts/register', { name: 'Test Chowk', lat: 25.205, lng: 85.515, radius: 800 });
+    // IoT telemetry endpoint
+    const telRes = await call('POST', '/api/iot/AMB-101/telemetry', { lat: 25.201, lng: 85.51, speed: 48, sats: 8, fix: true });
+    assert.strictEqual(telRes.status, 200);
+    assert.strictEqual(telRes.body.telemetry.sats, 8);
+
+    // Pre Bed Booked & Gate Inspection endpoints
+    const bedPost = await call('POST', `/api/trips/${ok.body.tripId}/bed-booking`, {
+      hospitalName: 'Sadar Hospital',
+      bedType: 'ICU Bed + Ventilator',
+      patientBrief: 'Accident trauma patient, oxygen support required',
+      contactPhone: '9876543210'
+    });
+    assert.strictEqual(bedPost.status, 200);
+    assert.strictEqual(bedPost.body.booking.status, 'CONFIRMED');
+
+    const bedGet = await call('GET', `/api/trips/${ok.body.tripId}/bed-booking`);
+    assert.strictEqual(bedGet.status, 200);
+    assert.strictEqual(bedGet.body.booking.bedType, 'ICU Bed + Ventilator');
+
+    const gatePost = await call('POST', '/api/gate-inspection', {
+      ambulanceId: 'AMB-101',
+      driverName: 'Ravi',
+      checklist: { oxygen: true, fuel: true, siren: true }
+    });
+    assert.strictEqual(gatePost.status, 200);
+    assert.strictEqual(gatePost.body.report.status, 'APPROVED_ON_GATE');
+
+    const hosp = await call('GET', '/api/hospitals/directory');
+    assert.strictEqual(hosp.status, 200);
+    assert.ok(hosp.body.hospitals.length > 0);
+
     await call('POST', `/api/trips/${ok.body.tripId}/stop`, {});
 
     // restart -> everything must still be there

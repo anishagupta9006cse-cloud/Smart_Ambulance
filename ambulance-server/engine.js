@@ -431,6 +431,10 @@ function setMessage(tripId, text) {
   return trip.message;
 }
 
+function activeTrips() {
+  return [...trips.values()].filter((t) => t.active);
+}
+
 function sweep() {
   const t = now();
   for (const [id, trip] of trips) {
@@ -455,7 +459,7 @@ function stats() {
 
 module.exports = {
   CFG, httpError, clean, validPoint, setNotifier, setPersist, loadPosts, allPosts, deletePost,
-  setIotHook, liveAmbulances, onlinePosts, routePostIds, setPriority, setMessage,
+  setIotHook, liveAmbulances, onlinePosts, routePostIds, setPriority, setMessage, activeTrips,
   upsertPost, setOffDuty, startTrip, getTrip, updateLocation, stopTrip, replaceRoute,
   tripView, alertsForPost, testAlert, postAction, sweep, stats,
 };

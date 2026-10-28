@@ -1,12 +1,13 @@
 'use strict';
-// IoT devices (ESP32 / Arduino with a display and a buzzer).
+// IoT devices (ESP32 Super Mini with 0.96" OLED display, Neo-6M GPS, buzzer, and LED light).
 // One device per police post (device id = post id) and optionally one per ambulance (device id = ambulance number).
-// Apps send commands -> the server keeps the latest state -> the device polls GET /api/iot/<id>/state every 1-2 seconds.
+// Apps send commands -> the server keeps the latest state -> the device polls GET /api/iot/<id>/state
+// or sends GPS telemetry via POST /api/iot/<id>/telemetry every 1-2 seconds.
 // No external packages needed.
 
 const LIMITS = {
   BUZZ_DEFAULT_S: 20,
-  BUZZ_MAX_S: 60,        // a buzzer can never be left ON for more than this (fail-safe)
+  BUZZ_MAX_S: 60,        // a buzzer/LED can never be left ON for more than this (fail-safe)
   DISPLAY_DEFAULT_S: 120,
   DISPLAY_MAX_S: 600,
   ONLINE_MS: 30000,      // device polled in the last 30 s => "online"
@@ -14,6 +15,7 @@ const LIMITS = {
   MANUAL_HOLD_S: 60,     // after a manual command, auto mode keeps quiet for this long
 };
 const PATTERNS = ['beep', 'siren', 'continuous'];
+const LED_PATTERNS = ['strobe', 'blink', 'solid', 'off'];
 
 const devices = new Map();
 const now = () => Date.now();
@@ -34,10 +36,22 @@ function getDevice(id, create = true) {
       id: key,
       display: { text: '', until: 0, by: '' },
       buzzer: { pattern: 'off', until: 0, by: '' },
-      auto: true,          // alerts from the engine switch display + buzzer automatically
+      led: { pattern: 'off', until: 0, by: '' },
+      telemetry: {
+        lat: null,
+        lng: null,
+        speed: 0,
+        altitude: 0,
+        sats: 0,
+        fix: false,
+        hdop: 0,
+        battery: null,
+        updatedAt: 0,
+      },
+      auto: true,          // alerts from the engine switch display + buzzer + LED automatically
       autoStatus: '',      // last auto status written (approaching / imminent / test)
       holdUntil: 0,        // manual command in force => auto stays quiet
-      lastSeen: 0,         // last time the DEVICE polled
+      lastSeen: 0,         // last time the DEVICE polled or sent telemetry
       lastCommandAt: 0,
       seq: 0,              // goes up every time something changes, so a device can react only to changes
     };
@@ -50,13 +64,31 @@ function view(d) {
   const t = now();
   const dispOn = d.display.text && d.display.until > t;
   const buzOn = d.buzzer.pattern !== 'off' && d.buzzer.until > t;
+  const ledOn = d.led && d.led.pattern !== 'off' && d.led.until > t;
   return {
     id: d.id,
     online: d.lastSeen > 0 && t - d.lastSeen < LIMITS.ONLINE_MS,
     lastSeenSec: d.lastSeen ? Math.round((t - d.lastSeen) / 1000) : null,
     auto: d.auto,
-    display: { text: dispOn ? d.display.text : '', on: !!dispOn, by: dispOn ? d.display.by : '', remainingSec: dispOn ? Math.round((d.display.until - t) / 1000) : 0 },
-    buzzer: { pattern: buzOn ? d.buzzer.pattern : 'off', on: !!buzOn, by: buzOn ? d.buzzer.by : '', remainingSec: buzOn ? Math.round((d.buzzer.until - t) / 1000) : 0 },
+    display: {
+      text: dispOn ? d.display.text : '',
+      on: !!dispOn,
+      by: dispOn ? d.display.by : '',
+      remainingSec: dispOn ? Math.round((d.display.until - t) / 1000) : 0,
+    },
+    buzzer: {
+      pattern: buzOn ? d.buzzer.pattern : 'off',
+      on: !!buzOn,
+      by: buzOn ? d.buzzer.by : '',
+      remainingSec: buzOn ? Math.round((d.buzzer.until - t) / 1000) : 0,
+    },
+    led: {
+      pattern: ledOn ? d.led.pattern : 'off',
+      on: !!ledOn,
+      by: ledOn ? d.led.by : '',
+      remainingSec: ledOn ? Math.round((d.led.until - t) / 1000) : 0,
+    },
+    telemetry: d.telemetry || null,
     seq: d.seq,
   };
 }
@@ -68,23 +100,84 @@ function deviceState(id) {
   d.lastSeen = now();
   const v = view(d);
   return {
-    ok: true, id: d.id, seq: d.seq,
-    display: { on: v.display.on, text: v.display.text },
+    ok: true,
+    id: d.id,
+    seq: d.seq,
+    display: { on: v.display.on, text: v.display.text, by: v.display.by },
     buzzer: { on: v.buzzer.on, pattern: v.buzzer.pattern },
+    led: { on: v.led.on, pattern: v.led.pattern },
     serverTime: now(),
+  };
+}
+
+// Records GPS and sensor telemetry from the IoT device and responds with current device state.
+function recordTelemetry(id, data) {
+  const d = getDevice(id);
+  if (!d) {
+    const e = new Error('Invalid device ID. Use 2-40 letters, numbers, - or _.');
+    e.status = 400;
+    e.code = 'BAD_DEVICE';
+    throw e;
+  }
+  const t = now();
+  d.lastSeen = t;
+  if (data && typeof data === 'object') {
+    const lat = Number(data.lat);
+    const lng = Number(data.lng);
+    const hasFix = !!data.fix && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    d.telemetry = {
+      lat: hasFix ? lat : (Number.isFinite(lat) ? lat : null),
+      lng: hasFix ? lng : (Number.isFinite(lng) ? lng : null),
+      speed: Math.max(0, Number(data.speed) || 0),
+      altitude: Number(data.altitude) || 0,
+      sats: Math.max(0, Math.round(Number(data.sats) || 0)),
+      fix: hasFix,
+      hdop: Number(data.hdop) || 0,
+      battery: data.battery !== undefined ? clamp(Number(data.battery), 0, 100) : null,
+      updatedAt: t,
+    };
+  }
+  const v = view(d);
+  return {
+    ok: true,
+    id: d.id,
+    seq: d.seq,
+    display: { on: v.display.on, text: v.display.text, by: v.display.by },
+    buzzer: { on: v.buzzer.on, pattern: v.buzzer.pattern },
+    led: { on: v.led.on, pattern: v.led.pattern },
+    telemetry: d.telemetry,
+    serverTime: t,
   };
 }
 
 function getView(id) {
   const d = getDevice(id, false);
-  return d ? view(d) : { id: normId(id) || String(id || ''), online: false, lastSeenSec: null, auto: true, display: { text: '', on: false, by: '', remainingSec: 0 }, buzzer: { pattern: 'off', on: false, by: '', remainingSec: 0 }, seq: 0, known: false };
+  return d
+    ? view(d)
+    : {
+        id: normId(id) || String(id || ''),
+        online: false,
+        lastSeenSec: null,
+        auto: true,
+        display: { text: '', on: false, by: '', remainingSec: 0 },
+        buzzer: { pattern: 'off', on: false, by: '', remainingSec: 0 },
+        led: { pattern: 'off', on: false, by: '', remainingSec: 0 },
+        telemetry: null,
+        seq: 0,
+        known: false,
+      };
 }
 
 // Manual command from an app.
-// body = { display?: { text, seconds } | null,  buzzer?: { pattern: 'beep'|'siren'|'continuous'|'off', seconds },  auto?: boolean }
+// body = { display?: { text, seconds } | null,  buzzer?: { pattern: 'beep'|'siren'|'continuous'|'off', seconds }, led?: { pattern: 'strobe'|'blink'|'solid'|'off', seconds }, auto?: boolean }
 function command(id, body, by) {
   const d = getDevice(id);
-  if (!d) { const e = new Error('Invalid device ID. Use 2-40 letters, numbers, - or _.'); e.status = 400; e.code = 'BAD_DEVICE'; throw e; }
+  if (!d) {
+    const e = new Error('Invalid device ID. Use 2-40 letters, numbers, - or _.');
+    e.status = 400;
+    e.code = 'BAD_DEVICE';
+    throw e;
+  }
   const b = body || {};
   const t = now();
   const who = cleanText(by || '', 40);
@@ -92,7 +185,7 @@ function command(id, body, by) {
 
   if ('display' in b) {
     const x = b.display;
-    const text = x && typeof x === 'object' ? cleanText(x.text, 64) : '';
+    const text = x && typeof x === 'object' ? cleanText(x.text, 96) : '';
     if (text) {
       const sec = clamp(Number(x.seconds) || LIMITS.DISPLAY_DEFAULT_S, 5, LIMITS.DISPLAY_MAX_S);
       d.display = { text, until: t + sec * 1000, by: who };
@@ -112,6 +205,17 @@ function command(id, body, by) {
     }
     changed = true;
   }
+  if ('led' in b) {
+    const x = b.led && typeof b.led === 'object' ? b.led : {};
+    const pattern = LED_PATTERNS.includes(x.pattern) ? x.pattern : 'off';
+    if (pattern === 'off') {
+      d.led = { pattern: 'off', until: 0, by: '' };
+    } else {
+      const sec = clamp(Number(x.seconds) || LIMITS.BUZZ_DEFAULT_S, 2, LIMITS.BUZZ_MAX_S);
+      d.led = { pattern, until: t + sec * 1000, by: who };
+    }
+    changed = true;
+  }
   if (typeof b.auto === 'boolean') {
     d.auto = b.auto;
     if (!b.auto) d.autoStatus = '';
@@ -120,7 +224,7 @@ function command(id, body, by) {
   if (changed) {
     d.seq += 1;
     d.lastCommandAt = t;
-    if ('display' in b || 'buzzer' in b) d.holdUntil = t + LIMITS.MANUAL_HOLD_S * 1000;
+    if ('display' in b || 'buzzer' in b || 'led' in b) d.holdUntil = t + LIMITS.MANUAL_HOLD_S * 1000;
   }
   return view(d);
 }
@@ -146,6 +250,7 @@ function onEngineEvent(ev) {
     if (d.autoStatus) {
       d.display = { text: '', until: 0, by: '' };
       d.buzzer = { pattern: 'off', until: 0, by: '' };
+      d.led = { pattern: 'off', until: 0, by: '' };
       d.autoStatus = '';
       d.seq += 1;
     }
@@ -156,6 +261,7 @@ function onEngineEvent(ev) {
   if (ev.event === 'test') {
     d.display = { text: alertText('test'), until: t + 8000, by: 'Test' };
     d.buzzer = { pattern: 'beep', until: t + 4000, by: 'Test' };
+    d.led = { pattern: 'strobe', until: t + 4000, by: 'Test' };
     d.autoStatus = 'test';
     d.seq += 1;
     return;
@@ -167,12 +273,14 @@ function onEngineEvent(ev) {
   if (d.autoStatus !== key) {
     d.display = { text: alertText(status, ev.priority), until, by: 'Auto' };
     d.buzzer = { pattern: status === 'imminent' ? 'siren' : 'beep', until, by: 'Auto' };
+    d.led = { pattern: status === 'imminent' ? 'strobe' : 'blink', until, by: 'Auto' };
     d.autoStatus = key;
     d.seq += 1;
   } else {
     // same state: only keep it alive (no seq change)
     d.display.until = until;
     d.buzzer.until = until;
+    d.led.until = until;
   }
 }
 
@@ -180,6 +288,20 @@ function listDevices() {
   return [...devices.values()].map(view);
 }
 
-function reset() { devices.clear(); }
+function reset() {
+  devices.clear();
+}
 
-module.exports = { LIMITS, PATTERNS, normId, deviceState, getView, command, onEngineEvent, listDevices, reset };
+module.exports = {
+  LIMITS,
+  PATTERNS,
+  LED_PATTERNS,
+  normId,
+  deviceState,
+  recordTelemetry,
+  getView,
+  command,
+  onEngineEvent,
+  listDevices,
+  reset,
+};
